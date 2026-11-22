@@ -1,0 +1,11 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": [
+    "./src",
+    "./.venv/lib/python3.14/site-packages"
+  ],
+  "autoSearchPaths": true,
+  "useLibraryCodeForTypes": true,
+  "typeCheckingMode": "basic"
+}

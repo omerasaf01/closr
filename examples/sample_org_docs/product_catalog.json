@@ -1,0 +1,80 @@
+{
+  "organization": "NovaFlow Analytics",
+  "catalog_version": "2026.1",
+  "products": [
+    {
+      "id": "novaflow-pulse",
+      "name": "NovaFlow Pulse",
+      "category": "RevOps & NRR Intelligence",
+      "tagline": "Unified pipeline health, cohort NRR tracking, and board-ready revenue forecasting.",
+      "key_features": [
+        "Real-time ARR, GRR, and NRR waterfall dashboards",
+        "Automated cohort retention and expansion tracking",
+        "CRM hygiene anomaly detection across Salesforce and HubSpot",
+        "Board-ready weekly revenue pacing digests"
+      ],
+      "pain_points_solved": [
+        "Conflicting ARR numbers between Finance spreadsheets and Sales CRM reports",
+        "Weeks wasted manually reconciling Stripe/Chargebee invoices with CRM deals",
+        "Late visibility into contraction trends before quarter close"
+      ],
+      "integrations": ["Salesforce", "HubSpot", "Stripe", "Chargebee", "NetSuite"]
+    },
+    {
+      "id": "novaflow-retain",
+      "name": "NovaFlow Retain",
+      "category": "Predictive Churn & CS Automation",
+      "tagline": "Explainable 90-day churn prediction and automated save playbooks.",
+      "key_features": [
+        "Explainable account-level churn probability scores 90 days ahead of renewal",
+        "Product telemetry drop-off and champion-churn alerts",
+        "Automated Slack and CRM escalation playbooks for at-risk accounts",
+        "Expansion readiness scoring for seat and tier upsells"
+      ],
+      "pain_points_solved": [
+        "Customer Success teams learning about churn risk only during the renewal call",
+        "Subjective red/yellow/green account health scores with no predictive accuracy",
+        "Missed expansion revenue in accounts hitting usage ceilings"
+      ],
+      "integrations": ["Segment", "Mixpanel", "Amplitude", "Zendesk", "Intercom", "Slack", "Gainsight"]
+    },
+    {
+      "id": "novaflow-sync",
+      "name": "NovaFlow Sync",
+      "category": "Zero-ETL Revenue Data Fabric",
+      "tagline": "48-hour unified revenue data model with EU/US residency controls.",
+      "key_features": [
+        "Pre-built identity resolution linking billing accounts, CRM orgs, and product workspaces",
+        "Snowflake and BigQuery bidirectional sync",
+        "SOC 2 Type II and Frankfurt EU GDPR data residency isolation"
+      ],
+      "pain_points_solved": [
+        "6-month data engineering backlogs blocking RevOps analytics initiatives",
+        "Broken customer ID mappings across billing, support, and product systems",
+        "EMEA procurement blockers around US-only data hosting"
+      ],
+      "integrations": ["Snowflake", "BigQuery", "PostgreSQL", "Salesforce", "HubSpot"]
+    }
+  ],
+  "pricing_tiers": [
+    {
+      "tier": "Growth",
+      "annual_price_usd": 18000,
+      "included_modules": ["NovaFlow Pulse", "NovaFlow Sync (Standard)"],
+      "ideal_for": "Series B SaaS teams ($10M-$25M ARR) consolidating CRM and billing reporting."
+    },
+    {
+      "tier": "Scale",
+      "annual_price_usd": 36000,
+      "included_modules": ["NovaFlow Pulse", "NovaFlow Retain", "NovaFlow Sync (Full)"],
+      "ideal_for": "Mid-market SaaS and subscription brands ($25M-$75M ARR) reducing churn and driving NRR."
+    },
+    {
+      "tier": "Enterprise",
+      "custom_pricing": true,
+      "starting_annual_price_usd": 65000,
+      "included_modules": ["NovaFlow Pulse", "NovaFlow Retain", "NovaFlow Sync (Dedicated EU/US Residency)"],
+      "ideal_for": "Multi-product or EMEA-regulated enterprises ($75M+ ARR) requiring custom SLAs and EU residency."
+    }
+  ]
+}

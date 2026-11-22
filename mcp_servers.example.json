@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "closr-marketing": {
+      "transport": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "closr.mcp.marketing_server"],
+      "enabled": true
+    },
+    "brave-search": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      },
+      "enabled": false
+    },
+    "hubspot-crm": {
+      "transport": "streamable_http",
+      "url": "https://mcp.example.com/hubspot",
+      "headers": {
+        "Authorization": "Bearer ${HUBSPOT_ACCESS_TOKEN}"
+      },
+      "enabled": false
+    },
+    "ga4-analytics": {
+      "transport": "sse",
+      "url": "https://analytics-mcp.example.com/sse",
+      "headers": {
+        "X-API-Key": "${GA4_MCP_API_KEY}"
+      },
+      "enabled": false
+    }
+  }
+}
