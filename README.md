@@ -28,6 +28,10 @@
 - **LangGraph Orchestrator & Rich CLI**
   - Deterministic 4-stage `MarketingPlan` pipeline (`build_marketing_pipeline`) plus a conversational `MarketingAgent.chat()` loop with per-thread `InMemorySaver` memory and automatic profile/audience state synchronization across tool calls.
   - Polished Typer + Rich terminal interface (`closr`).
+- **Promotional Video Prompting (ChatGPT) & Generation (ByteDance Seedance)**
+  - `PromoVideoPromptBuilder` strictly uses OpenAI ChatGPT (`LLMFactory.get_chatgpt_model()`) to turn verified organization profiles and audience insights into simple, clear, visually concrete `VideoPromptSpec` prompts tailored to the target platform (`16:9` for LinkedIn/YouTube, `9:16` for TikTok/Reels/Shorts, `1:1` for Instagram/Meta).
+  - `SeedanceClient` & `PromoVideoService` submit tasks to the ByteDance Seedance / BytePlus ModelArk v3 API, poll until completion, download `.mp4` assets, and support `--dry-run` prompt previews without calling Seedance.
+  - Exposed to `MarketingAgent` via 3 LangChain tools (`draft_promo_video_prompt`, `generate_promo_video`, `check_video_generation_status`) and `closr video`.
 
 ---
 
@@ -42,27 +46,29 @@ flowchart LR
     Stage3 --> Stage4["4. synthesize_plan<br/>(MarketingPlan)"]
 
     subgraph Agent["Autonomous MarketingAgent (LangGraph + InMemorySaver)"]
-        Chat["chat(message, thread_id)"] <--> Tools["Document Tools | Audience Tools | MCP Tools"]
+        Chat["chat(message, thread_id)"] <--> Tools["Document Tools | Audience Tools | Video Tools | MCP Tools"]
     end
 
     Factory["LLMFactory<br/>(OpenAI + Google AI Routing & Fallbacks)"] --> Stage1
     Factory --> Stage2
     Factory --> Stage4
     Factory --> Chat
+    Factory --> Video["PromoVideoService<br/>(ChatGPT Prompt -> Seedance API)"]
 ```
 
 ### Module Breakdown
 
 | Module | Responsibility |
 | --- | --- |
-| `src/closr/config.py` | `ClosrSettings` (`CLOSR_*` env/dotenv config), `LLMProvider`, `MCPServerConfig` |
-| `src/closr/llm.py` | `LLMFactory` for provider selection, task routing, embeddings, and `RunnableWithFallbacks` |
-| `src/closr/schemas.py` | Pydantic v2 domain models (`OrganizationProfile`, `MarketSignal`, `AudienceSegment`, `TargetAudienceReport`, `CampaignRecommendation`, `MarketingPlan`) |
+| `src/closr/config.py` | `ClosrSettings` (`CLOSR_*` env/dotenv config), `LLMProvider`, `MCPServerConfig`, Seedance settings |
+| `src/closr/llm.py` | `LLMFactory` for provider selection, task routing, strict ChatGPT video prompt model, embeddings, and `RunnableWithFallbacks` |
+| `src/closr/schemas.py` | Pydantic v2 domain models (`OrganizationProfile`, `MarketSignal`, `AudienceSegment`, `TargetAudienceReport`, `CampaignRecommendation`, `MarketingPlan`, `VideoPromptSpec`, `VideoGenerationRequest`, `VideoGenerationResult`) |
 | `src/closr/documents/` | Multi-format document loader (`loader.py`), persistent RAG store (`vectorstore.py`), `OrganizationAnalyzer` (`analyzer.py`), and LangChain tools (`tools.py`) |
 | `src/closr/audience/` | Web & offline heuristic scanners (`scanner.py`), `TargetAudienceDiscovery` (`analyzer.py`), and audience tools (`tools.py`) |
+| `src/closr/video/` | ChatGPT `PromoVideoPromptBuilder` (`prompt_builder.py`), async `SeedanceClient` (`seedance_client.py`), `PromoVideoService` (`service.py`), and video tools (`tools.py`) |
 | `src/closr/mcp/` | `MCPManager` (`manager.py`) and built-in FastMCP server (`marketing_server.py`) |
 | `src/closr/agent/` | 4-stage LangGraph workflow + `MarketingAgent` (`graph.py`), state (`state.py`), and prompts (`prompts.py`) |
-| `src/closr/cli.py` | Typer + Rich CLI (`analyze`, `discover`, `campaign`, `chat`, `mcp-tools`) |
+| `src/closr/cli.py` | Typer + Rich CLI (`analyze`, `discover`, `campaign`, `video`, `chat`, `mcp-tools`) |
 
 ---
 
@@ -109,6 +115,15 @@ cp .env.example .env
 | `CLOSR_TEMPERATURE` | `0.2` | Default sampling temperature (`0.0`–`2.0`) |
 | `CLOSR_MCP_CONFIG_PATH` | `mcp_servers.json` | Path to external MCP servers configuration file |
 | `CLOSR_VECTORSTORE_DIR` | `.closr_data/vectorstore` | Directory for persisted vector knowledge base files |
+| `SEEDANCE_API_KEY` | — | ByteDance Seedance / BytePlus ModelArk API key (`ARK_API_KEY` and `CLOSR_SEEDANCE_API_KEY` also accepted) |
+| `CLOSR_SEEDANCE_BASE_URL` | `https://ark.ap-southeast.bytepluses.com/api/v3` | Base URL for the Seedance / ModelArk v3 API |
+| `CLOSR_SEEDANCE_MODEL` | `seedance-1-0-pro-250528` | Default Seedance video generation model |
+| `CLOSR_SEEDANCE_DEFAULT_RATIO` | `16:9` | Fallback aspect ratio when not inferred from platform |
+| `CLOSR_SEEDANCE_DEFAULT_RESOLUTION` | `720p` | Default video output resolution (`480p`, `720p`, `1080p`, `4k`) |
+| `CLOSR_SEEDANCE_DEFAULT_DURATION` | `5` | Default clip duration in seconds (`4`–`30`) |
+| `CLOSR_SEEDANCE_POLL_INTERVAL_SECONDS` | `5.0` | Polling interval in seconds while waiting for Seedance tasks |
+| `CLOSR_SEEDANCE_POLL_TIMEOUT_SECONDS` | `300.0` | Maximum polling timeout in seconds |
+| `CLOSR_VIDEO_OUTPUT_DIR` | `.closr_data/videos` | Default directory for downloaded promotional videos |
 
 #### Task-Based Provider Routing
 
@@ -116,6 +131,7 @@ When both keys are configured, `LLMFactory.get_model_for_task()` selects the bes
 - `document_analysis` -> `google` (long-context document synthesis)
 - `audience_discovery` -> `CLOSR_DEFAULT_PROVIDER`
 - `strategy` / `agent` -> `openai` (structured strategy & multi-tool calling)
+- `video_prompt` -> `openai` strictly (`LLMFactory.get_chatgpt_model()`, requires `OPENAI_API_KEY` with no cross-provider fallback)
 
 If only one provider key is present, all tasks transparently fall back to the available provider.
 
@@ -183,9 +199,33 @@ uv run closr campaign examples/sample_org_docs \
 
 Optional flags: `--offline` (disable live web search), `--no-mcp` (disable built-in and external MCP servers).
 
+### Generate Promotional Videos (ChatGPT Prompt + Seedance)
+
+Preview a simple, brand-grounded ChatGPT video prompt without calling the Seedance API (`--dry-run`):
+
+```bash
+uv run closr video examples/sample_org_docs \
+  --goal "Launch EMEA GDPR churn intelligence campaign" \
+  --platform linkedin \
+  --duration 5 \
+  --dry-run
+```
+
+Generate a promotional video with Seedance, download the `.mp4`, and save the structured `VideoGenerationResult` JSON:
+
+```bash
+uv run closr video examples/sample_org_docs \
+  --goal "Highlight 48-hour zero-ETL onboarding" \
+  --platform reels \
+  --duration 8 \
+  --resolution 1080p \
+  --save-video out/promo.mp4 \
+  --output out/video_result.json
+```
+
 ### Interactive Autonomous Chat
 
-Launch a multi-turn strategy session with full tool calling (`analyze_organization_documents`, `search_organization_knowledge`, `scan_market_signals`, `discover_target_audiences`, `evaluate_audience_segment`, and connected MCP tools):
+Launch a multi-turn strategy session with full tool calling (`analyze_organization_documents`, `search_organization_knowledge`, `scan_market_signals`, `discover_target_audiences`, `evaluate_audience_segment`, `draft_promo_video_prompt`, `generate_promo_video`, `check_video_generation_status`, and connected MCP tools):
 
 ```bash
 uv run closr chat \
@@ -214,7 +254,17 @@ async def main() -> None:
     for campaign in plan.campaigns:
         print(f"- {campaign.campaign_name} -> {campaign.channels}")
 
-    # 2. Continue in conversational mode with thread memory
+    # 2. Draft a simple ChatGPT promo prompt and generate a Seedance video
+    video_result = await agent.generate_promo_video(
+        campaign_goal="Highlight 48-hour zero-ETL RevOps onboarding",
+        platform="linkedin",
+        duration=5,
+        resolution="720p",
+        download_to="out/novaflow_promo.mp4",
+    )
+    print("Video status:", video_result.status, "Saved to:", video_result.local_path)
+
+    # 3. Continue in conversational mode with thread memory
     reply = await agent.chat(
         "Generate UTM tracking links for our primary LinkedIn and Google Search campaigns "
         "pointing to https://novaflow.io/demo.",

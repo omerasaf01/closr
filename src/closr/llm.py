@@ -13,7 +13,13 @@ from pydantic import SecretStr
 
 from closr.config import ClosrSettings, LLMProvider, get_settings
 
-TaskType = Literal["document_analysis", "audience_discovery", "strategy", "agent"]
+TaskType = Literal[
+    "document_analysis",
+    "audience_discovery",
+    "strategy",
+    "agent",
+    "video_prompt",
+]
 
 
 class LLMFactory:
@@ -116,10 +122,28 @@ class LLMFactory:
             "audience_discovery": self.settings.default_provider,
             "strategy": LLMProvider.OPENAI,
             "agent": LLMProvider.OPENAI,
+            "video_prompt": LLMProvider.OPENAI,
         }
         return self.get_chat_model(
             provider=task_preferences[task],
             allow_fallback=allow_fallback,
+        )
+
+    def get_chatgpt_model(
+        self,
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> ChatOpenAI:
+        """Return an OpenAI ChatGPT model strictly without falling back to other providers."""
+        if not self.settings.openai_api_key:
+            raise ValueError(
+                "OpenAI API key (OPENAI_API_KEY) is required for ChatGPT video prompt generation."
+            )
+        effective_temp = self.settings.temperature if temperature is None else temperature
+        return ChatOpenAI(
+            model=model or self.settings.openai_chat_model,
+            api_key=SecretStr(self.settings.openai_api_key),
+            temperature=effective_temp,
         )
 
     def get_resilient_chat_model(

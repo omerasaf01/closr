@@ -19,13 +19,19 @@ from closr.schemas import (
     MarketingPlan,
     OrganizationProfile,
     TargetAudienceReport,
+    VideoGenerationRequest,
+    VideoGenerationResult,
+    VideoPromptSpec,
 )
 
 ENV_KEYS_TO_CLEAR = (
     "OPENAI_API_KEY",
     "GOOGLE_API_KEY",
+    "SEEDANCE_API_KEY",
+    "ARK_API_KEY",
     "CLOSR_OPENAI_API_KEY",
     "CLOSR_GOOGLE_API_KEY",
+    "CLOSR_SEEDANCE_API_KEY",
     "CLOSR_DEFAULT_PROVIDER",
     "CLOSR_FALLBACK_PROVIDER",
     "CLOSR_OPENAI_CHAT_MODEL",
@@ -36,6 +42,14 @@ ENV_KEYS_TO_CLEAR = (
     "CLOSR_TEMPERATURE",
     "CLOSR_MCP_CONFIG_PATH",
     "CLOSR_VECTORSTORE_DIR",
+    "CLOSR_SEEDANCE_BASE_URL",
+    "CLOSR_SEEDANCE_MODEL",
+    "CLOSR_SEEDANCE_DEFAULT_RATIO",
+    "CLOSR_SEEDANCE_DEFAULT_RESOLUTION",
+    "CLOSR_SEEDANCE_DEFAULT_DURATION",
+    "CLOSR_SEEDANCE_POLL_INTERVAL_SECONDS",
+    "CLOSR_SEEDANCE_POLL_TIMEOUT_SECONDS",
+    "CLOSR_VIDEO_OUTPUT_DIR",
 )
 
 
@@ -425,3 +439,162 @@ def test_factory_get_embeddings_and_fallback(clean_env: None) -> None:
     )
     emb = google_only.get_embeddings()
     assert isinstance(emb, GoogleGenerativeAIEmbeddings)
+
+
+# ---------------------------------------------------------------------------
+# Seedance config, video schema, and strict ChatGPT tests
+# ---------------------------------------------------------------------------
+
+
+def test_seedance_settings_defaults_and_env_overrides(
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults = ClosrSettings(_env_file=None)  # type: ignore[call-arg]
+    assert defaults.seedance_api_key is None
+    assert defaults.seedance_base_url == "https://ark.ap-southeast.bytepluses.com/api/v3"
+    assert defaults.seedance_model == "seedance-1-0-pro-250528"
+    assert defaults.seedance_default_ratio == "16:9"
+    assert defaults.seedance_default_resolution == "720p"
+    assert defaults.seedance_default_duration == 5
+    assert defaults.seedance_poll_interval_seconds == pytest.approx(5.0)
+    assert defaults.seedance_poll_timeout_seconds == pytest.approx(300.0)
+    assert defaults.video_output_dir == Path(".closr_data/videos")
+
+    monkeypatch.setenv("SEEDANCE_API_KEY", "sd-key-primary")
+    monkeypatch.setenv("CLOSR_SEEDANCE_BASE_URL", "https://custom.ark.example/api/v3")
+    monkeypatch.setenv("CLOSR_SEEDANCE_MODEL", "seedance-1-0-lite")
+    monkeypatch.setenv("CLOSR_SEEDANCE_DEFAULT_RATIO", "9:16")
+    monkeypatch.setenv("CLOSR_SEEDANCE_DEFAULT_RESOLUTION", "1080p")
+    monkeypatch.setenv("CLOSR_SEEDANCE_DEFAULT_DURATION", "10")
+    monkeypatch.setenv("CLOSR_SEEDANCE_POLL_INTERVAL_SECONDS", "2.5")
+    monkeypatch.setenv("CLOSR_SEEDANCE_POLL_TIMEOUT_SECONDS", "120.0")
+    monkeypatch.setenv("CLOSR_VIDEO_OUTPUT_DIR", "/tmp/closr_videos")
+
+    custom = ClosrSettings(_env_file=None)  # type: ignore[call-arg]
+    assert custom.seedance_api_key == "sd-key-primary"
+    assert custom.seedance_base_url == "https://custom.ark.example/api/v3"
+    assert custom.seedance_model == "seedance-1-0-lite"
+    assert custom.seedance_default_ratio == "9:16"
+    assert custom.seedance_default_resolution == "1080p"
+    assert custom.seedance_default_duration == 10
+    assert custom.seedance_poll_interval_seconds == pytest.approx(2.5)
+    assert custom.seedance_poll_timeout_seconds == pytest.approx(120.0)
+    assert custom.video_output_dir == Path("/tmp/closr_videos")
+
+
+def test_seedance_api_key_aliases_and_blank_normalization(
+    clean_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARK_API_KEY", "ark-key-123")
+    ark_settings = ClosrSettings(_env_file=None)  # type: ignore[call-arg]
+    assert ark_settings.seedance_api_key == "ark-key-123"
+
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.setenv("CLOSR_SEEDANCE_API_KEY", "closr-sd-456")
+    prefixed_settings = ClosrSettings(_env_file=None)  # type: ignore[call-arg]
+    assert prefixed_settings.seedance_api_key == "closr-sd-456"
+
+    monkeypatch.delenv("CLOSR_SEEDANCE_API_KEY", raising=False)
+    monkeypatch.setenv("SEEDANCE_API_KEY", "   ")
+    blank_settings = ClosrSettings(_env_file=None)  # type: ignore[call-arg]
+    assert blank_settings.seedance_api_key is None
+
+
+def test_video_schemas_validation_and_structured_output(clean_env: None) -> None:
+    spec = VideoPromptSpec(
+        title="Cloud Cost Clarity",
+        prompt=(
+            "Warm studio shot of an engineering lead smiling at a clean dashboard showing "
+            "cloud spend dropping by 30 percent, soft natural daylight, smooth camera push-in."
+        ),
+        target_message="Cut AWS bills by 30% without slowing down deploys.",
+        recommended_ratio="16:9",
+        recommended_duration=8,
+        visual_highlights=[
+            "Clean laptop dashboard with downward spend curve",
+            "Relaxed engineering team collaborating",
+            "Minimalist product logo end-card",
+        ],
+        language="en",
+    )
+    req = VideoGenerationRequest(
+        prompt="  " + spec.prompt + "  ",
+        ratio="9:16",
+        resolution="1080p",
+        duration=8,
+        watermark=False,
+        generate_audio=True,
+        seed=42,
+    )
+    assert req.prompt == spec.prompt
+
+    result = VideoGenerationResult(
+        task_id="cgt-20261122-001",
+        status="succeeded",
+        model="seedance-1-0-pro-250528",
+        prompt=req.prompt,
+        prompt_spec=spec,
+        video_url="https://cdn.example.com/video.mp4",
+        local_path=".closr_data/videos/promo.mp4",
+        duration=8,
+        ratio="9:16",
+        resolution="1080p",
+    )
+    restored = VideoGenerationResult.model_validate_json(result.model_dump_json())
+    assert restored == result
+
+    with pytest.raises(ValidationError, match="empty"):
+        VideoGenerationRequest(prompt="   ")
+
+    for bad_duration in (3, 31):
+        with pytest.raises(ValidationError):
+            VideoGenerationRequest(prompt="Valid prompt", duration=bad_duration)
+        with pytest.raises(ValidationError):
+            VideoPromptSpec(
+                title="T",
+                prompt="Valid prompt",
+                target_message="Msg",
+                recommended_duration=bad_duration,
+            )
+
+    factory = LLMFactory(
+        ClosrSettings(_env_file=None, openai_api_key="sk-test")  # type: ignore[call-arg]
+    )
+    assert factory.get_chatgpt_model().with_structured_output(VideoPromptSpec) is not None
+
+
+def test_factory_get_chatgpt_model_strict_and_video_prompt_routing(clean_env: None) -> None:
+    both = LLMFactory(
+        ClosrSettings(
+            _env_file=None,  # type: ignore[call-arg]
+            openai_api_key="sk-test",
+            google_api_key="gk-test",
+            default_provider=LLMProvider.GOOGLE,
+            temperature=0.25,
+        )
+    )
+    strict_model = both.get_chatgpt_model()
+    assert isinstance(strict_model, ChatOpenAI)
+    assert strict_model.model_name == "gpt-4o-mini"
+    assert strict_model.temperature == pytest.approx(0.25)
+
+    overridden = both.get_chatgpt_model(model="gpt-4o", temperature=0.6)
+    assert isinstance(overridden, ChatOpenAI)
+    assert overridden.model_name == "gpt-4o"
+    assert overridden.temperature == pytest.approx(0.6)
+
+    routed = both.get_model_for_task("video_prompt")
+    assert isinstance(routed, ChatOpenAI)
+
+    # Strict helper must NEVER silently fall back to Google when OpenAI key is missing.
+    google_only = LLMFactory(
+        ClosrSettings(_env_file=None, google_api_key="gk-only")  # type: ignore[call-arg]
+    )
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        google_only.get_chatgpt_model()
+
+    no_keys = LLMFactory(ClosrSettings(_env_file=None))  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        no_keys.get_chatgpt_model()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from rich.console import Console
@@ -19,7 +19,9 @@ from closr.schemas import (
     MarketingPlan,
     OrganizationProfile,
     TargetAudienceReport,
+    VideoGenerationResult,
 )
+from closr.video import SeedanceAPIError, VideoRatio, VideoResolution
 
 app = typer.Typer(
     name="closr",
@@ -178,6 +180,55 @@ def _render_mcp_statuses(statuses: list[MCPServerStatus]) -> None:
             details,
         )
     console.print(table)
+
+
+_VALID_VIDEO_RATIOS: frozenset[str] = frozenset(
+    {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"}
+)
+_VALID_VIDEO_RESOLUTIONS: frozenset[str] = frozenset({"480p", "720p", "1080p", "4k"})
+
+
+def _render_video_result(result: VideoGenerationResult) -> None:
+    spec = result.prompt_spec
+    if spec is not None:
+        highlights = "\n".join(f"• {item}" for item in spec.visual_highlights) or "—"
+        prompt_body = (
+            f"[bold]Title:[/bold] {spec.title}\n"
+            f"[bold]Target Message:[/bold] {spec.target_message}\n"
+            f"[bold]Prompt:[/bold] {spec.prompt}\n"
+            f"[bold]Visual Highlights:[/bold]\n{highlights}"
+        )
+    else:
+        prompt_body = f"[bold]Prompt:[/bold] {result.prompt}"
+
+    console.print(
+        Panel(
+            prompt_body,
+            title="[bold cyan]ChatGPT Promotional Video Prompt[/bold cyan]",
+            border_style="cyan",
+        )
+    )
+
+    duration_str = f"{result.duration}s" if result.duration is not None else "—"
+    seedance_body = (
+        f"[bold]Task ID:[/bold] {result.task_id}\n"
+        f"[bold]Status:[/bold] {result.status}\n"
+        f"[bold]Model:[/bold] {result.model}\n"
+        f"[bold]Ratio:[/bold] {result.ratio or '—'}\n"
+        f"[bold]Resolution:[/bold] {result.resolution or '—'}\n"
+        f"[bold]Duration:[/bold] {duration_str}\n"
+        f"[bold]Video URL:[/bold] {result.video_url or '—'}\n"
+        f"[bold]Local Path:[/bold] {result.local_path or '—'}\n"
+        f"[bold]Error:[/bold] {result.error or '—'}"
+    )
+    border = "green" if result.status in {"succeeded", "dry_run"} else ("red" if result.error else "yellow")
+    console.print(
+        Panel(
+            seedance_body,
+            title="[bold magenta]Seedance Video Generation Result[/bold magenta]",
+            border_style=border,
+        )
+    )
 
 
 @app.command()
@@ -405,6 +456,119 @@ def mcp_tools(
         return
 
     _render_mcp_statuses(statuses)
+
+
+@app.command()
+def video(
+    docs_path: Annotated[
+        Path,
+        typer.Argument(help="Path to organization document(s)."),
+    ],
+    goal: Annotated[
+        str | None,
+        typer.Option("--goal", "-g", help="Optional campaign goal or promotional focus."),
+    ] = None,
+    platform: Annotated[
+        str,
+        typer.Option(
+            "--platform",
+            "-P",
+            help="Target distribution platform (e.g., linkedin, tiktok, reels, youtube, instagram).",
+        ),
+    ] = "linkedin",
+    duration: Annotated[
+        int,
+        typer.Option("--duration", "-d", help="Target video duration in seconds (4-30)."),
+    ] = 5,
+    ratio: Annotated[
+        str | None,
+        typer.Option(
+            "--ratio",
+            "-r",
+            help="Optional aspect ratio override (16:9, 9:16, 1:1, 4:3, 3:4, 21:9, adaptive).",
+        ),
+    ] = None,
+    resolution: Annotated[
+        str,
+        typer.Option(
+            "--resolution",
+            help="Target Seedance output resolution (480p, 720p, 1080p, 4k).",
+        ),
+    ] = "720p",
+    lang: Annotated[
+        str,
+        typer.Option("--lang", "-l", help="Output language for the generated video prompt (e.g., en, tr)."),
+    ] = "en",
+    provider: Annotated[
+        LLMProvider | None,
+        typer.Option(
+            "--provider",
+            "-p",
+            help="Preferred LLM provider for org doc analysis (video prompt always uses ChatGPT).",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Draft the ChatGPT prompt without calling the Seedance API."),
+    ] = False,
+    no_wait: Annotated[
+        bool,
+        typer.Option("--no-wait", help="Submit the Seedance task and return immediately without polling."),
+    ] = False,
+    save_video: Annotated[
+        Path | None,
+        typer.Option("--save-video", help="Optional path to save the downloaded .mp4 video file."),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Optional path to write VideoGenerationResult JSON."),
+    ] = None,
+) -> None:
+    """Draft a simple ChatGPT promo prompt from org docs and generate a video via Seedance."""
+    parsed_ratio: VideoRatio | None = None
+    if ratio is not None:
+        cleaned_ratio = ratio.strip()
+        if cleaned_ratio not in _VALID_VIDEO_RATIOS:
+            console.print(
+                f"[red]Error:[/red] Invalid ratio '{cleaned_ratio}'. "
+                f"Allowed values: {', '.join(sorted(_VALID_VIDEO_RATIOS))}."
+            )
+            raise typer.Exit(code=1)
+        parsed_ratio = cast(VideoRatio, cleaned_ratio)
+
+    cleaned_resolution = resolution.strip().lower()
+    if cleaned_resolution not in _VALID_VIDEO_RESOLUTIONS:
+        console.print(
+            f"[red]Error:[/red] Invalid resolution '{cleaned_resolution}'. "
+            "Allowed values: 480p, 720p, 1080p, 4k."
+        )
+        raise typer.Exit(code=1)
+    parsed_resolution = cast(VideoResolution, cleaned_resolution)
+
+    async def _run() -> VideoGenerationResult:
+        agent = _create_agent(provider=provider, no_mcp=True)
+        return await agent.generate_promo_video(
+            docs_path=docs_path,
+            campaign_goal=goal,
+            platform=platform,
+            duration=duration,
+            ratio=parsed_ratio,
+            resolution=parsed_resolution,
+            language=lang,
+            wait=not no_wait,
+            download_to=save_video,
+            dry_run=dry_run,
+        )
+
+    try:
+        result = asyncio.run(_run())
+    except (FileNotFoundError, ValueError, SeedanceAPIError, TimeoutError, RuntimeError, OSError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    _render_video_result(result)
+    if output is not None:
+        _write_json_output(output, result.model_dump_json(indent=2))
 
 
 def main() -> None:

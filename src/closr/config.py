@@ -67,9 +67,29 @@ class ClosrSettings(BaseSettings):
     mcp_config_path: Path = Path("mcp_servers.json")
     vectorstore_dir: Path = Path(".closr_data/vectorstore")
 
+    # Seedance (BytePlus Ark) video generation settings
+    seedance_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "seedance_api_key",
+            "SEEDANCE_API_KEY",
+            "ARK_API_KEY",
+            "CLOSR_SEEDANCE_API_KEY",
+        ),
+    )
+    seedance_base_url: str = "https://ark.ap-southeast.bytepluses.com/api/v3"
+    seedance_model: str = "seedance-1-0-pro-250528"
+    seedance_default_ratio: str = "16:9"
+    seedance_default_resolution: str = "720p"
+    seedance_default_duration: int = Field(default=5, ge=4, le=30)
+    seedance_poll_interval_seconds: float = Field(default=5.0, gt=0.0)
+    seedance_poll_timeout_seconds: float = Field(default=300.0, gt=0.0)
+    video_output_dir: Path = Path(".closr_data/videos")
+
     @field_validator(
         "openai_api_key",
         "google_api_key",
+        "seedance_api_key",
         "fallback_provider",
         "embedding_provider",
         mode="before",

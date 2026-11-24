@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class OrganizationProfile(BaseModel):
@@ -226,4 +228,134 @@ class MarketingPlan(BaseModel):
     next_steps: list[str] = Field(
         default_factory=list,
         description="Concrete, ordered next steps for execution.",
+    )
+
+
+class VideoPromptSpec(BaseModel):
+    """Structured promotional video prompt specification generated for Seedance."""
+
+    title: str = Field(
+        description="Short descriptive title for the promotional video.",
+    )
+    prompt: str = Field(
+        description=(
+            "Simple, clear, natural-language video generation prompt ready for Seedance "
+            "(plain visual description, concise and easy to understand)."
+        ),
+    )
+    target_message: str = Field(
+        description="Single core value proposition communicated by the video.",
+    )
+    recommended_ratio: Literal["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"] = Field(
+        default="16:9",
+        description="Recommended aspect ratio for the video.",
+    )
+    recommended_duration: int = Field(
+        default=5,
+        ge=4,
+        le=30,
+        description="Recommended duration in seconds (between 4 and 30).",
+    )
+    visual_highlights: list[str] = Field(
+        default_factory=list,
+        description="3-5 concise visual beats shown in the video.",
+    )
+    language: str = Field(
+        default="en",
+        description="Language code of the generated prompt (e.g. 'en', 'tr').",
+    )
+
+
+class VideoGenerationRequest(BaseModel):
+    """Normalized request payload for generating a promotional video via Seedance."""
+
+    prompt: str = Field(
+        description="Non-empty visual video generation prompt.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Optional Seedance model override.",
+    )
+    ratio: Literal["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"] = Field(
+        default="16:9",
+        description="Output video aspect ratio.",
+    )
+    resolution: Literal["480p", "720p", "1080p", "4k"] = Field(
+        default="720p",
+        description="Output video resolution.",
+    )
+    duration: int = Field(
+        default=5,
+        ge=4,
+        le=30,
+        description="Video duration in seconds (between 4 and 30).",
+    )
+    watermark: bool = Field(
+        default=False,
+        description="Whether to include a watermark on the generated video.",
+    )
+    generate_audio: bool | None = Field(
+        default=None,
+        description="Optional flag controlling synchronized audio generation if supported.",
+    )
+    seed: int | None = Field(
+        default=None,
+        description="Optional deterministic random seed.",
+    )
+    reference_image_url: str | None = Field(
+        default=None,
+        description="Optional reference image URL for image-to-video generation.",
+    )
+
+    @field_validator("prompt")
+    @classmethod
+    def _validate_non_empty_prompt(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Video generation prompt must not be empty.")
+        return stripped
+
+
+class VideoGenerationResult(BaseModel):
+    """Result record returned after submitting or completing a Seedance video task."""
+
+    task_id: str = Field(
+        description="Provider task identifier (or synthetic ID for dry runs).",
+    )
+    status: str = Field(
+        description="Lifecycle status (e.g. 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'dry_run').",
+    )
+    model: str = Field(
+        description="Model identifier used for video generation.",
+    )
+    prompt: str = Field(
+        description="Final prompt submitted for video generation.",
+    )
+    prompt_spec: VideoPromptSpec | None = Field(
+        default=None,
+        description="Optional structured prompt specification that produced this video.",
+    )
+    video_url: str | None = Field(
+        default=None,
+        description="Remote URL of the generated video asset, if available.",
+    )
+    local_path: str | None = Field(
+        default=None,
+        description="Local filesystem path where the downloaded video is saved, if any.",
+    )
+    duration: int | None = Field(
+        default=None,
+        description="Duration of the generated video in seconds.",
+    )
+    ratio: str | None = Field(
+        default=None,
+        description="Aspect ratio of the generated video.",
+    )
+    resolution: str | None = Field(
+        default=None,
+        description="Resolution of the generated video.",
+    )
+    error: str | None = Field(
+        default=None,
+        description="Error message if video generation failed.",
     )

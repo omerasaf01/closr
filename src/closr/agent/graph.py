@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from langchain.agents import create_agent
 from langchain_core.embeddings import Embeddings
@@ -43,6 +43,16 @@ from closr.schemas import (
     MarketingPlan,
     OrganizationProfile,
     TargetAudienceReport,
+    VideoGenerationResult,
+    VideoPromptSpec,
+)
+from closr.video import (
+    PromoVideoPromptBuilder,
+    PromoVideoService,
+    SeedanceClient,
+    VideoRatio,
+    VideoResolution,
+    create_video_tools,
 )
 
 logger = logging.getLogger(__name__)
@@ -512,6 +522,9 @@ class MarketingAgent:
         audience_llm: BaseChatModel | Runnable[Any, Any] | None = None,
         strategy_llm: BaseChatModel | Runnable[Any, Any] | None = None,
         agent_llm: BaseChatModel | None = None,
+        video_prompt_llm: BaseChatModel | Runnable[Any, Any] | None = None,
+        seedance_client: SeedanceClient | None = None,
+        video_service: PromoVideoService | None = None,
         embeddings: Embeddings | None = None,
         scanner: AudienceScanner | None = None,
         mcp_manager: MCPManager | None = None,
@@ -526,6 +539,9 @@ class MarketingAgent:
         self._audience_llm = audience_llm
         self._strategy_llm = strategy_llm
         self._agent_llm = agent_llm
+        self._video_prompt_llm = video_prompt_llm
+        self._seedance_client = seedance_client
+        self._video_service = video_service
         self._embeddings = embeddings
         self._scanner = scanner
         self._include_builtin_mcp = include_builtin_mcp
@@ -609,6 +625,25 @@ class MarketingAgent:
             return self.llm_factory.get_chat_model(provider=self.provider)
         return self.llm_factory.get_model_for_task("agent")
 
+    def _get_video_service(self) -> PromoVideoService:
+        if self._video_service is not None:
+            return self._video_service
+        prompt_builder = PromoVideoPromptBuilder(
+            llm=self._video_prompt_llm,
+            llm_factory=self.llm_factory,
+        )
+        seedance_client = (
+            self._seedance_client
+            if self._seedance_client is not None
+            else SeedanceClient(settings=self.settings)
+        )
+        return PromoVideoService(
+            prompt_builder=prompt_builder,
+            seedance_client=seedance_client,
+            settings=self.settings,
+            llm_factory=self.llm_factory,
+        )
+
     def _maybe_cache_profile(self, output: Any) -> None:
         if not isinstance(output, str):
             return
@@ -676,7 +711,12 @@ class MarketingAgent:
             else t
             for t in raw_audience_tools
         ]
-        self._tools = [*doc_tools, *audience_tools, *self._mcp_tools]
+        video_tools = create_video_tools(
+            self._get_video_service(),
+            profile_getter=lambda: self.current_profile,
+            audience_getter=lambda: self.current_audience_report,
+        )
+        self._tools = [*doc_tools, *audience_tools, *video_tools, *self._mcp_tools]
 
     @property
     def tools(self) -> list[BaseTool]:
@@ -748,6 +788,105 @@ class MarketingAgent:
         if plan is None:
             raise RuntimeError("Marketing pipeline finished without producing a MarketingPlan.")
         return plan
+
+    async def _resolve_profile_for_video(
+        self,
+        *,
+        docs_path: Path | str | None,
+        profile: OrganizationProfile | None,
+    ) -> OrganizationProfile:
+        if profile is not None:
+            return profile
+        if docs_path is not None:
+            return await self.analyze_organization(docs_path)
+        if self.current_profile is not None:
+            return self.current_profile
+        raise ValueError(
+            "No OrganizationProfile provided or cached. Provide 'docs_path' or 'profile', "
+            "or run analyze_organization first."
+        )
+
+    async def draft_promo_video_prompt(
+        self,
+        *,
+        docs_path: Path | str | None = None,
+        profile: OrganizationProfile | None = None,
+        audience_report: TargetAudienceReport | None = None,
+        campaign_goal: str | None = None,
+        platform: str | None = None,
+        duration: int | None = None,
+        ratio: VideoRatio | None = None,
+        language: str = "en",
+    ) -> VideoPromptSpec:
+        """Draft a simple, brand-grounded Seedance promotional video prompt via ChatGPT."""
+        target_profile = await self._resolve_profile_for_video(
+            docs_path=docs_path,
+            profile=profile,
+        )
+        effective_report = (
+            audience_report
+            if audience_report is not None
+            else self.current_audience_report
+        )
+        return await self._get_video_service().draft_prompt(
+            target_profile,
+            audience_report=effective_report,
+            campaign_goal=campaign_goal,
+            platform=platform,
+            duration=duration,
+            ratio=ratio,
+            language=language,
+        )
+
+    async def generate_promo_video(
+        self,
+        *,
+        docs_path: Path | str | None = None,
+        profile: OrganizationProfile | None = None,
+        audience_report: TargetAudienceReport | None = None,
+        campaign_goal: str | None = None,
+        platform: str | None = None,
+        duration: int | None = None,
+        ratio: VideoRatio | None = None,
+        resolution: VideoResolution | None = None,
+        model: str | None = None,
+        watermark: bool = False,
+        generate_audio: bool | None = None,
+        seed: int | None = None,
+        reference_image_url: str | None = None,
+        language: str = "en",
+        wait: bool = True,
+        download_to: Path | str | None = None,
+        dry_run: bool = False,
+    ) -> VideoGenerationResult:
+        """Draft a prompt via ChatGPT and generate a promotional video via Seedance."""
+        target_profile = await self._resolve_profile_for_video(
+            docs_path=docs_path,
+            profile=profile,
+        )
+        effective_report = (
+            audience_report
+            if audience_report is not None
+            else self.current_audience_report
+        )
+        return await self._get_video_service().create_promo_video(
+            target_profile,
+            audience_report=effective_report,
+            campaign_goal=campaign_goal,
+            platform=platform,
+            duration=duration,
+            ratio=ratio,
+            resolution=resolution,
+            model=model,
+            watermark=watermark,
+            generate_audio=generate_audio,
+            seed=seed,
+            reference_image_url=reference_image_url,
+            language=language,
+            wait=wait,
+            download_to=download_to,
+            dry_run=dry_run,
+        )
 
     async def chat(self, message: str, thread_id: str = "default") -> str:
         """Run a conversational turn with tool-calling and per-thread memory."""

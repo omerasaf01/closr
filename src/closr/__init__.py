@@ -11,6 +11,15 @@ from closr.schemas import (
     MarketingPlan,
     OrganizationProfile,
     TargetAudienceReport,
+    VideoGenerationRequest,
+    VideoGenerationResult,
+    VideoPromptSpec,
+)
+from closr.video import (
+    PromoVideoPromptBuilder,
+    PromoVideoService,
+    SeedanceAPIError,
+    SeedanceClient,
 )
 
 __version__ = "0.1.0"
@@ -35,7 +44,14 @@ __all__ = [
     "MarketingAgent",
     "MarketingPlan",
     "OrganizationProfile",
+    "PromoVideoPromptBuilder",
+    "PromoVideoService",
+    "SeedanceAPIError",
+    "SeedanceClient",
     "TargetAudienceReport",
+    "VideoGenerationRequest",
+    "VideoGenerationResult",
+    "VideoPromptSpec",
     "get_settings",
     "main",
 ]
